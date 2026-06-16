@@ -1,0 +1,10 @@
+react-unifind/node_modules/
+react-unifind/dist/
+react-unifind/.env
+react-unifind/unifind-api.log
+react-unifind/server/*.log
+react-unifind/server/uploads/
+react-unifind/server/backups/
+react-unifind/server/data/
+.DS_Store
+Thumbs.db
