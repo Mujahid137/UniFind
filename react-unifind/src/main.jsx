@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AnimatePresence, motion, useMotionValue, useSpring } from "framer-motion";
-import { HashRouter, Link, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft, Bell, Boxes, Calendar, Check, CheckCircle, ClipboardCheck, ClipboardList, Clock, ExternalLink, Eye, EyeOff, FileText, ListFilter, LogOut, Mail, MapPin, Moon, Search, Settings, Shield, ShieldCheck, Sparkles, Sun, Upload, User, UserCheck, Users, X, Zap,
+  ArrowLeft, Bell, Boxes, Calendar, Check, CheckCircle, ClipboardCheck, ClipboardList, Clock, ExternalLink, Eye, FileText, ListFilter, LogOut, Mail, MapPin, Search, Settings, Shield, ShieldCheck, Sparkles, Upload, User, UserCheck, Users, X, Zap,
 } from "lucide-react";
 import { useAppStore } from "./store";
 import "./styles.css";
@@ -14,8 +14,8 @@ const claimStatuses = ["submitted", "under-review", "approved", "rejected", "ret
 const statusOptions = ["All Statuses", "reported", "returned"];
 const sortOptions = ["Newest", "Oldest", "Title A-Z"];
 const UIU_DOMAIN = "uiu.ac.bd";
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000/api/mysql";
-const SESSION_TOKEN_KEY = "unifind-mysql-token";
+const ADMIN_EMAIL = "admin@unifind.demo";
+const ADMIN_PASSWORD = "UniFindDemo123!";
 const defaultBrowseFilters = {
   lost: { query: "", category: "All Categories", location: "All Locations", status: "All Statuses", sort: "Newest" },
   found: { query: "", category: "All Categories", location: "All Locations", status: "All Statuses", sort: "Newest" },
@@ -39,46 +39,29 @@ const adminMenuSections = [
 ];
 const adminItemStatuses = ["reported", "pending", "approved", "claimed", "returned", "rejected", "expired"];
 
-function getSessionToken() {
-  return localStorage.getItem(SESSION_TOKEN_KEY) || "";
-}
-
-function setSessionToken(token = "") {
-  if (!token) return;
-  localStorage.setItem(SESSION_TOKEN_KEY, token);
-}
-
-function clearSessionToken() {
-  localStorage.removeItem(SESSION_TOKEN_KEY);
-}
-
-async function requestMysql(path, options = {}) {
-  const token = getSessionToken();
-  const headers = {
-    ...(options.body ? { "Content-Type": "application/json" } : {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(options.headers || {}),
-  };
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "Could not complete database request.");
-  return data;
-}
-
 function isUiuEmail(value) {
-  return value.trim().toLowerCase().includes(UIU_DOMAIN);
+  const [local, domain] = value.trim().toLowerCase().split("@");
+  return Boolean(local) && Boolean(domain) && domain.includes(UIU_DOMAIN);
+}
+
+function isAdminPortalEmail(value) {
+  return value.trim().toLowerCase() === ADMIN_EMAIL;
+}
+
+function isAdminPassword(value) {
+  return value === ADMIN_PASSWORD;
 }
 
 function isAdminSession(user) {
-  return user?.role === "Admin";
+  return user?.role === "Admin" && user.email?.toLowerCase() === ADMIN_EMAIL;
 }
 
 function accountLabel(user) {
-  return isAdminSession(user) ? "Administrator" : user.email;
+  return isAdminSession(user) ? "Authorized admin account" : user.email;
 }
 
 function safeEmail(email) {
-  return email;
+  return String(email || "").toLowerCase() === ADMIN_EMAIL ? "Authorized admin account" : email;
 }
 
 function isAdminAlert(notification = {}) {
@@ -114,151 +97,17 @@ function itemDetailsLocked(item, user, claims = []) {
   return item?.kind === "lost" && !canViewItemDetails(item, user, claims);
 }
 
-function pathSegment(pathname, index) {
-  return pathname.split("/").filter(Boolean)[index] || "";
-}
-
 function App() {
   return (
-    <HashRouter>
-      <MysqlSessionSync />
-      <MysqlItemsSync />
-      <MysqlWorkflowSync />
+    <BrowserRouter>
       <RouterView />
-    </HashRouter>
-  );
-}
-
-function MysqlSessionSync() {
-  const loginWithUser = useAppStore((s) => s.loginWithUser);
-  const logout = useAppStore((s) => s.logout);
-
-  useEffect(() => {
-    let cancelled = false;
-    const token = getSessionToken();
-    if (!token) return undefined;
-
-    requestMysql("/auth/me")
-      .then((data) => {
-        if (!cancelled && data.user) loginWithUser(data.user);
-      })
-      .catch(() => {
-        clearSessionToken();
-        if (!cancelled) logout();
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loginWithUser, logout]);
-
-  return null;
-}
-
-function MysqlItemsSync() {
-  const replaceItems = useAppStore((s) => s.replaceItems);
-
-  useEffect(() => {
-    let cancelled = false;
-    requestMysql("/items")
-      .then((data) => {
-        if (!cancelled) replaceItems(data.items || []);
-      })
-      .catch(() => {
-        // The app can still run from local state if the backend is not open yet.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [replaceItems]);
-
-  return null;
-}
-
-function MysqlWorkflowSync() {
-  const user = useAppStore((s) => s.user);
-  const replaceClaims = useAppStore((s) => s.replaceClaims);
-  const replaceMessages = useAppStore((s) => s.replaceMessages);
-  const replaceComplaints = useAppStore((s) => s.replaceComplaints);
-
-  useEffect(() => {
-    let cancelled = false;
-    const token = getSessionToken();
-
-    if (!user || !token) {
-      replaceClaims([]);
-      replaceMessages([]);
-      replaceComplaints([]);
-      return undefined;
-    }
-
-    const claimPath = isAdminSession(user) ? "/admin/claims" : "/claims/my";
-    const messageRequest = isAdminSession(user) ? requestMysql("/admin/messages") : Promise.resolve({ messages: [] });
-    const reportRequest = isAdminSession(user) ? requestMysql("/admin/reports") : Promise.resolve({ reports: [] });
-
-    Promise.all([requestMysql(claimPath), messageRequest, reportRequest])
-      .then(([claimData, messageData, reportData]) => {
-        if (cancelled) return;
-        replaceClaims(claimData.claims || []);
-        replaceMessages(messageData.messages || []);
-        replaceComplaints(reportData.reports || []);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        replaceClaims([]);
-        replaceMessages([]);
-        replaceComplaints([]);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user, replaceClaims, replaceMessages, replaceComplaints]);
-
-  return null;
-}
-
-function ThemeToggle() {
-  const [theme, setTheme] = useState(() => localStorage.getItem("unifind-theme") || "light");
-  const isDark = theme === "dark";
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("unifind-theme", theme);
-  }, [theme]);
-
-  return (
-    <button
-      className="theme-toggle"
-      type="button"
-      aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-      title={isDark ? "Light mode" : "Dark mode"}
-      onClick={() => setTheme(isDark ? "light" : "dark")}
-    >
-      <span className="theme-toggle-track">
-        <span className="theme-toggle-thumb">{isDark ? <Moon size={15} /> : <Sun size={15} />}</span>
-      </span>
-      <span>{isDark ? "Dark" : "Light"}</span>
-    </button>
+    </BrowserRouter>
   );
 }
 
 function RouterView() {
   const location = useLocation();
   const { pathname: path } = location;
-  let element = <Navigate to="/" replace />;
-  if (path === "/") element = <HomePage />;
-  else if (path === "/login") element = <LoginPage />;
-  else if (path === "/signup") element = <SignUpPage />;
-  else if (path === "/dashboard") element = <Protected><DashboardPage /></Protected>;
-  else if (path.startsWith("/report/")) element = <Protected><ReportPage /></Protected>;
-  else if (path.startsWith("/browse/")) element = <Protected><BrowsePage /></Protected>;
-  else if (path.startsWith("/items/")) element = <Protected><ItemPage /></Protected>;
-  else if (path === "/matches") element = <Protected><MatchesPage /></Protected>;
-  else if (path === "/claims") element = <Protected><ClaimsPage /></Protected>;
-  else if (path === "/admin") element = <AdminPage />;
-  else if (path === "/profile") element = <Protected><ProfilePage /></Protected>;
-  else if (path === "/notifications") element = <Protected><NotificationsPage /></Protected>;
 
   return (
     <AnimatePresence mode="wait">
@@ -269,7 +118,21 @@ function RouterView() {
         exit={{ opacity: 0, y: -8 }}
         transition={{ duration: 0.24, ease: "easeOut" }}
       >
-        {element}
+        <Routes location={location}>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/signup" element={<SignUpPage />} />
+          <Route path="/dashboard" element={<Protected><DashboardPage /></Protected>} />
+          <Route path="/report/:kind" element={<Protected><ReportPage /></Protected>} />
+          <Route path="/browse/:kind" element={<Protected><BrowsePage /></Protected>} />
+          <Route path="/items/:id" element={<Protected><ItemPage /></Protected>} />
+          <Route path="/matches" element={<Protected><MatchesPage /></Protected>} />
+          <Route path="/claims" element={<Protected><ClaimsPage /></Protected>} />
+          <Route path="/admin" element={<AdminPage />} />
+          <Route path="/profile" element={<Protected><ProfilePage /></Protected>} />
+          <Route path="/notifications" element={<Protected><NotificationsPage /></Protected>} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </motion.div>
     </AnimatePresence>
   );
@@ -287,7 +150,6 @@ function HomePage() {
       <section className="home-nav">
         <div className="brand"><Boxes size={20} /> UniFind</div>
         <div className="home-nav-actions">
-          <ThemeToggle />
           <Link className="btn btn-light small" to="/login">Sign In</Link>
           <Link className="btn btn-dark small" to="/signup">Sign Up</Link>
           <Link className="btn btn-light small" to="/admin"><Settings size={13} /> Admin Panel</Link>
@@ -297,7 +159,7 @@ function HomePage() {
 
       <motion.section id="hero" className="home-hero hero-premium" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
         <div className="logo-circle"><Boxes size={30} /></div>
-        <h1>Campus Lost &amp; Found</h1>
+        <h1>Campus Lost &amp; Found, Reimagined</h1>
         <p>A modern matching system that helps students report, discover, and recover items with speed and trust.</p>
         <div className="home-actions">
           <MagneticLink className="btn btn-dark" to="/login">Get Started</MagneticLink>
@@ -314,6 +176,20 @@ function HomePage() {
 
       <FeatureBlocks />
       <HowItWorks />
+
+      <section className="card admin-entry-card">
+        <div>
+          <span className="eyebrow"><ShieldCheck size={14} /> Dedicated Admin Workspace</span>
+          <h3>Manage reports, claims, verification, and item returns from one secure panel.</h3>
+        </div>
+        <Link className="btn btn-dark" to="/admin">Open Admin Panel</Link>
+      </section>
+
+      <section id="cta" className="card cta-premium">
+        <h3>Launch Your Campus Recovery Hub</h3>
+        <p>From first report to verified return, UniFind keeps every step clean, fast, and transparent.</p>
+        <MagneticLink className="btn btn-dark" to="/login">Open UniFind App</MagneticLink>
+      </section>
     </main>
   );
 }
@@ -324,44 +200,17 @@ function GuestStart({ className = "btn btn-light" }) {
   return <button className={className} type="button" onClick={() => { login("guest"); nav("/dashboard"); }}>Login as Guest</button>;
 }
 
-function PasswordInput({ value, onChange, placeholder }) {
-  const [visible, setVisible] = useState(false);
-  const Icon = visible ? EyeOff : Eye;
-
-  return (
-    <div className="input-wrap password-wrap">
-      <Shield size={16} />
-      <input
-        type={visible ? "text" : "password"}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-      />
-      <button
-        className="password-toggle"
-        type="button"
-        aria-label={visible ? "Hide password" : "Show password"}
-        title={visible ? "Hide password" : "Show password"}
-        onClick={() => setVisible((current) => !current)}
-      >
-        <Icon size={16} />
-      </button>
-    </div>
-  );
-}
-
 function LoginPage() {
-  const loginWithUser = useAppStore((s) => s.loginWithUser);
+  const login = useAppStore((s) => s.login);
   const nav = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const strength = passwordStrength(password);
 
-  async function submitLogin() {
+  function submitLogin() {
     if (!isUiuEmail(email)) {
-      setError("Use an email that contains uiu.ac.bd.");
+      setError("Use your official UIU email. The part after @ should include uiu.ac.bd.");
       return;
     }
     if (password.trim().length < 6) {
@@ -369,20 +218,9 @@ function LoginPage() {
       return;
     }
     setError("");
-    setSubmitting(true);
-    try {
-      const data = await requestMysql("/auth/signin", {
-        method: "POST",
-        body: JSON.stringify({ email: email.trim(), password }),
-      });
-      setSessionToken(data.token);
-      loginWithUser(data.user);
-      nav("/dashboard");
-    } catch (err) {
-      setError(err.message || "Could not sign in.");
-    } finally {
-      setSubmitting(false);
-    }
+    const name = email.split("@")[0].replace(/[._-]/g, " ");
+    login("signin", { email: email.trim(), name });
+    nav("/dashboard");
   }
 
   return (
@@ -394,40 +232,40 @@ function LoginPage() {
       </section>
       <section className="card auth-card">
         <h2>Sign In</h2>
-        <p className="subtle">Use an email that contains uiu.ac.bd</p>
+        <p className="subtle">Only official UIU email addresses are allowed</p>
         <div className="field"><label>UIU Email *</label><div className="input-wrap"><Mail size={16} /><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="example@uiu.ac.bd" /></div></div>
-        <div className="field"><label>Password *</label><PasswordInput value={password} onChange={setPassword} placeholder="Enter password" /></div>
+        <div className="field"><label>Password *</label><div className="input-wrap"><Shield size={16} /><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password" /></div></div>
         <div className="strength-wrap"><div className={`strength-fill ${strength.tone}`} style={{ width: `${strength.score}%` }} /><span>{strength.label}</span></div>
         {error ? <p className="form-error">{error}</p> : null}
-        <button className="btn btn-dark" type="button" onClick={submitLogin} disabled={submitting}>{submitting ? "Signing In..." : "Sign In"}</button>
+        <button className="btn btn-dark" type="button" onClick={submitLogin}>Sign In</button>
         <div className="separator"><span>Or</span></div>
         <GuestStart />
         <Link className="link" to="/signup">Don&apos;t have an account? Sign up</Link>
         <Link className="ghost-link" to="/">Back to Home</Link>
       </section>
+      <section className="banner"><strong>Demo Mode:</strong> This is a frontend-only demo. Data is stored in your browser&apos;s local storage.</section>
     </main>
   );
 }
 
 function SignUpPage() {
-  const loginWithUser = useAppStore((s) => s.loginWithUser);
+  const login = useAppStore((s) => s.login);
   const nav = useNavigate();
   const [form, setForm] = useState({ name: "", email: "", password: "", confirm: "" });
   const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const strength = passwordStrength(form.password);
 
   function update(key, value) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  async function submitSignUp() {
+  function submitSignUp() {
     if (form.name.trim().length < 2) {
       setError("Enter your full name.");
       return;
     }
     if (!isUiuEmail(form.email)) {
-      setError("Sign up requires an email that contains uiu.ac.bd.");
+      setError("Sign up requires uiu.ac.bd somewhere after the @ symbol.");
       return;
     }
     if (form.password.length < 6) {
@@ -439,20 +277,8 @@ function SignUpPage() {
       return;
     }
     setError("");
-    setSubmitting(true);
-    try {
-      const data = await requestMysql("/auth/signup", {
-        method: "POST",
-        body: JSON.stringify({ name: form.name.trim(), email: form.email.trim(), password: form.password }),
-      });
-      setSessionToken(data.token);
-      loginWithUser(data.user);
-      nav("/dashboard");
-    } catch (err) {
-      setError(`${err.message} Make sure the backend is running with npm.cmd run server.`);
-    } finally {
-      setSubmitting(false);
-    }
+    login("signup", { name: form.name.trim(), email: form.email.trim() });
+    nav("/dashboard");
   }
 
   return (
@@ -464,18 +290,18 @@ function SignUpPage() {
       </section>
       <section className="card auth-card">
         <h2>Sign Up</h2>
-        <p className="subtle">Register using an email that contains uiu.ac.bd</p>
+        <p className="subtle">Register using your official UIU email address</p>
         <div className="field"><label>Full Name *</label><div className="input-wrap"><User size={16} /><input value={form.name} onChange={(e) => update("name", e.target.value)} placeholder="Your full name" /></div></div>
         <div className="field"><label>UIU Email *</label><div className="input-wrap"><Mail size={16} /><input value={form.email} onChange={(e) => update("email", e.target.value)} placeholder="example@uiu.ac.bd" /></div></div>
         <div className="field"><label>Password *</label><div className="input-wrap"><Shield size={16} /><input type="password" value={form.password} onChange={(e) => update("password", e.target.value)} placeholder="Set password" /></div></div>
         <div className="strength-wrap"><div className={`strength-fill ${strength.tone}`} style={{ width: `${strength.score}%` }} /><span>{strength.label}</span></div>
         <div className="field"><label>Confirm Password *</label><div className="input-wrap"><Shield size={16} /><input type="password" value={form.confirm} onChange={(e) => update("confirm", e.target.value)} placeholder="Confirm password" /></div></div>
         {error ? <p className="form-error">{error}</p> : null}
-        <button className="btn btn-dark" type="button" onClick={submitSignUp} disabled={submitting}>{submitting ? "Creating..." : "Create Account"}</button>
+        <button className="btn btn-dark" type="button" onClick={submitSignUp}>Create Account</button>
         <Link className="link" to="/login">Already have an account? Sign in</Link>
         <Link className="ghost-link" to="/">Back to Home</Link>
       </section>
-      <section className="banner"><strong>UIU Policy:</strong> Access requires an email containing `uiu.ac.bd`.</section>
+      <section className="banner"><strong>UIU Policy:</strong> Access is restricted to official `@uiu.ac.bd` email addresses.</section>
     </main>
   );
 }
@@ -486,11 +312,6 @@ function AppHeader({ active = "dashboard" }) {
   const visibleNotifications = visibleNotificationsForUser(notifications, user);
   const unread = visibleNotifications.filter((notification) => !notification.read).length;
   const noticeLabel = isAdminSession(user) ? "Alerts" : "Notifications";
-  const handleLogout = () => {
-    clearSessionToken();
-    logout();
-    nav("/");
-  };
   const links = [
     { key: "dashboard", label: "Dashboard", to: "/dashboard", icon: <Boxes size={14} /> },
     { key: "claims", label: "Claims", to: "/claims", icon: <ClipboardCheck size={14} /> },
@@ -515,9 +336,8 @@ function AppHeader({ active = "dashboard" }) {
         ))}
       </nav>
       <div className="top-actions">
-        <ThemeToggle />
         <div className="user-chip"><User size={14} /><div><div className="name-row">{user.name} <span>{user.role}</span></div><small>{accountLabel(user)}</small></div></div>
-        <button type="button" className="btn btn-light small" onClick={handleLogout}><LogOut size={14} /> Logout</button>
+        <button type="button" className="btn btn-light small" onClick={() => { logout(); nav("/"); }}><LogOut size={14} /> Logout</button>
       </div>
     </header>
   );
@@ -549,6 +369,11 @@ function DashboardPage() {
           <span className="eyebrow"><Sparkles size={14} /> UIU Recovery Workspace</span>
           <h1>Welcome back, {user.role === "Guest" ? "Guest" : user.name.split(" ")[0]}.</h1>
           <p>Track reports, review matches, and move lost items back to their owners from one organized dashboard.</p>
+          <div className="dashboard-hero-actions">
+            <Link className="btn btn-dark" to="/report/lost"><Upload size={15} /> Report Lost</Link>
+            <Link className="btn btn-light" to="/report/found"><CheckCircle size={15} /> Report Found</Link>
+            <Link className="btn btn-light" to="/browse/lost"><Search size={15} /> Browse Items</Link>
+          </div>
         </div>
         <div className="dashboard-focus-card">
           <span>Today&apos;s Focus</span>
@@ -614,13 +439,30 @@ function DashboardPage() {
           </div>
         </section>
       </section>
+      <section className="card filter-card dashboard-notifications">
+        <div className="section-heading compact-heading">
+          <h3><Bell size={16} /> Recent {noticeLabel}</h3>
+          <Link className="ghost-link inline-link" to="/notifications">View all</Link>
+        </div>
+        <div className="notification-strip">
+          {visibleNotifications.slice(0, 4).map((n) => (
+            <Link to={n.actionTo || "/notifications"} key={n.id} className="notification-line">
+              <span />
+              <div>
+                <strong>{n.text}</strong>
+                <small>{formatDate(n.date)}</small>
+              </div>
+            </Link>
+          ))}
+          {!visibleNotifications.length ? <p className="showing">No {noticeLabel.toLowerCase()} yet.</p> : null}
+        </div>
+      </section>
     </main>
   );
 }
 
 function ReportPage() {
-  const location = useLocation();
-  const kind = pathSegment(location.pathname, 1);
+  const { kind } = useParams();
   const addItem = useAppStore((s) => s.addItem);
   const user = useAppStore((s) => s.user);
   const profile = useAppStore((s) => s.profile);
@@ -643,7 +485,6 @@ function ReportPage() {
     uiuId: profile?.uiuId || "",
   });
   const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const update = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
   function handlePhotoChange(event) {
@@ -658,7 +499,7 @@ function ReportPage() {
     reader.readAsDataURL(file);
   }
 
-  async function submitReport(event) {
+  function submitReport(event) {
     event.preventDefault();
     const required = ["category", "title", "description", "location", "date", "reporter", "email"];
     const missing = required.some((key) => !String(form[key] || "").trim());
@@ -667,19 +508,8 @@ function ReportPage() {
       return;
     }
     setError("");
-    setSubmitting(true);
-    try {
-      const data = await requestMysql("/items", {
-        method: "POST",
-        body: JSON.stringify({ ...form, kind: isLost ? "lost" : "found" }),
-      });
-      const item = addItem(data.item);
-      nav(`/items/${item.id}`, { state: { submittedItem: item } });
-    } catch (err) {
-      setError(`${err.message} Make sure XAMPP MySQL is running and start the backend with npm.cmd run server.`);
-    } finally {
-      setSubmitting(false);
-    }
+    const item = addItem({ ...form, kind: isLost ? "lost" : "found" });
+    nav(`/items/${item.id}`);
   }
 
   return (
@@ -717,7 +547,7 @@ function ReportPage() {
           <LabeledInput label="UIU ID (Optional)" value={form.uiuId} onChange={(v) => update("uiuId", v)} placeholder="e.g., 011223004" />
           <LabeledInput label="Your Phone (Optional)" value={form.phone} onChange={(v) => update("phone", v)} />
           {error ? <p className="form-error">{error}</p> : null}
-          <button className={`btn ${isLost ? "btn-red" : "btn-dark"}`} type="submit" disabled={submitting}>{submitting ? "Saving..." : `Submit ${isLost ? "Lost" : "Found"} Report`}</button>
+          <button className={`btn ${isLost ? "btn-red" : "btn-dark"}`} type="submit">Submit {isLost ? "Lost" : "Found"} Report</button>
         </form>
       </section>
     </main>
@@ -725,8 +555,7 @@ function ReportPage() {
 }
 
 function BrowsePage() {
-  const routeLocation = useLocation();
-  const kind = pathSegment(routeLocation.pathname, 1);
+  const { kind } = useParams();
   const user = useAppStore((s) => s.user);
   const items = useAppStore((s) => s.items);
   const claims = useAppStore((s) => s.claims);
@@ -792,14 +621,11 @@ function BrowsePage() {
 }
 
 function ItemPage() {
-  const location = useLocation();
-  const id = pathSegment(location.pathname, 1);
+  const { id } = useParams();
   const user = useAppStore((s) => s.user);
   const items = useAppStore((s) => s.items);
   const claims = useAppStore((s) => s.claims);
-  const submittedItem = location.state?.submittedItem;
-  const item = items.find((entry) => String(entry.id) === String(id)) ||
-    (String(submittedItem?.id) === String(id) ? submittedItem : null);
+  const item = items.find((entry) => String(entry.id) === String(id));
   const itemClaims = claims.filter((claim) => String(claim.itemId) === String(id));
   const detailsVisible = canViewItemDetails(item, user, claims);
 
@@ -914,64 +740,29 @@ function ClaimsPage() {
 }
 
 function AdminPage() {
-  const { user, claims, items, loginWithUser, logout } = useAppStore();
+  const { user, claims, items, login, logout } = useAppStore();
   const [status, setStatus] = useState("submitted");
   const [activeSection, setActiveSection] = useState("dashboard");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [adminStats, setAdminStats] = useState(null);
-  const pendingCount = adminStats?.openClaims ?? claims.filter((claim) => ["submitted", "under-review"].includes(claim.status)).length;
-  const returnedCount = adminStats?.resolvedCases ?? items.filter((item) => item.status === "returned").length;
-  const openReports = adminStats
-    ? (Number(adminStats.totalLostItems || 0) + Number(adminStats.totalFoundItems || 0) - Number(adminStats.resolvedCases || 0))
-    : items.filter((item) => item.status !== "returned").length;
-  const recentAdminReports = adminStats?.recentReports?.length
-    ? adminStats.recentReports.slice(0, 4)
-    : [...items].sort((a, b) => reportTimeValue(b) - reportTimeValue(a)).slice(0, 4);
+  const pendingCount = claims.filter((claim) => ["submitted", "under-review"].includes(claim.status)).length;
+  const returnedCount = items.filter((item) => item.status === "returned").length;
+  const openReports = items.filter((item) => item.status !== "returned").length;
+  const recentAdminReports = [...items].sort((a, b) => reportTimeValue(b) - reportTimeValue(a)).slice(0, 4);
   const activeMeta = adminMenuSections.find((section) => section.key === activeSection) || adminMenuSections[0];
 
-  useEffect(() => {
-    let cancelled = false;
-    if (!isAdminSession(user)) {
-      setAdminStats(null);
-      return undefined;
+  function submitAdminLogin() {
+    if (!isAdminPortalEmail(email)) {
+      setError("Admin access is restricted to the registered administrator account.");
+      return;
     }
-
-    requestMysql("/admin/dashboard")
-      .then((data) => {
-        if (!cancelled) setAdminStats(data.stats || null);
-      })
-      .catch(() => {
-        if (!cancelled) setAdminStats(null);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
-
-  async function submitAdminLogin() {
+    if (!isAdminPassword(password)) {
+      setError("Incorrect admin password.");
+      return;
+    }
     setError("");
-    try {
-      const data = await requestMysql("/auth/signin", {
-        method: "POST",
-        body: JSON.stringify({ email: email.trim(), password }),
-      });
-      if (!isAdminSession(data.user)) {
-        clearSessionToken();
-        throw new Error("This account does not have admin access.");
-      }
-      setSessionToken(data.token);
-      loginWithUser(data.user);
-    } catch (err) {
-      setError(err.message || "Could not open the admin panel.");
-    }
-  }
-
-  function handleAdminLogout() {
-    clearSessionToken();
-    logout();
+    login("signin", { email: email.trim(), name: "Lost & Found Admin" });
   }
 
   if (!isAdminSession(user)) {
@@ -980,7 +771,6 @@ function AdminPage() {
         <header className="admin-public-nav">
           <Link className="brand" to="/"><Boxes size={22} /> UniFind</Link>
           <div className="home-nav-actions">
-            <ThemeToggle />
             <Link className="btn btn-light small" to="/">Main Site</Link>
             <Link className="btn btn-light small" to="/login">Student Sign In</Link>
           </div>
@@ -999,13 +789,13 @@ function AdminPage() {
           <section className="card auth-card admin-login-card">
             <div className="soft-icon red"><Shield size={22} /></div>
             <h2>Admin Sign In</h2>
-            <p className="subtle">Sign in with a MySQL-backed account that has the `admin` role.</p>
+            <p className="subtle">Explore the demo with admin@unifind.demo / UniFindDemo123! Data is saved only in this browser.</p>
             {user ? <p className="admin-note">A non-admin session is active. Sign out first, then use the registered administrator account.</p> : null}
-            <div className="field"><label>Admin Email *</label><div className="input-wrap"><Mail size={16} /><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@uiu.ac.bd" /></div></div>
-            <div className="field"><label>Password *</label><PasswordInput value={password} onChange={setPassword} placeholder="Enter admin password" /></div>
+            <div className="field"><label>Admin Email *</label><div className="input-wrap"><Mail size={16} /><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Registered admin email" /></div></div>
+            <div className="field"><label>Password *</label><div className="input-wrap"><Shield size={16} /><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter admin password" /></div></div>
             {error ? <p className="form-error">{error}</p> : null}
             <button className="btn btn-dark" type="button" onClick={submitAdminLogin}>Open Admin Panel</button>
-            {user ? <button className="btn btn-light" type="button" onClick={handleAdminLogout}>Sign Out Current User</button> : null}
+            {user ? <button className="btn btn-light" type="button" onClick={logout}>Sign Out Current User</button> : null}
             <Link className="ghost-link" to="/">Back to Main Page</Link>
           </section>
         </section>
@@ -1015,7 +805,7 @@ function AdminPage() {
 
   return (
     <main className="admin-console-shell">
-      <AdminHeader user={user} onLogout={handleAdminLogout} />
+      <AdminHeader user={user} onLogout={logout} />
       <section className="admin-console-hero">
         <div>
           <span className="eyebrow"><Settings size={14} /> Admin Console</span>
@@ -1072,7 +862,6 @@ function AdminHeader({ user, onLogout }) {
         <Link to="/claims">Claims</Link>
       </nav>
       <div className="top-actions">
-        <ThemeToggle />
         <div className="user-chip"><ShieldCheck size={14} /><div><div className="name-row">{user.name} <span>Admin</span></div><small>Authorized admin account</small></div></div>
         <button className="btn btn-light small" type="button" onClick={onLogout}><LogOut size={14} /> Logout</button>
       </div>
@@ -1163,8 +952,6 @@ function AdminItemManager({ kind }) {
   const [query, setQuery] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [draft, setDraft] = useState({});
-  const [actionError, setActionError] = useState("");
-  const [busyKey, setBusyKey] = useState("");
   const filtered = items
     .filter((item) => item.kind === kind && [item.title, item.description, item.category, item.location, item.reporter]
       .some((value) => String(value || "").toLowerCase().includes(query.toLowerCase())))
@@ -1175,55 +962,12 @@ function AdminItemManager({ kind }) {
     setDraft({ title: item.title, category: item.category, location: item.location, status: item.status });
   }
 
-  async function runItemAction(key, action) {
-    setActionError("");
-    setBusyKey(key);
-    try {
-      await action();
-    } catch (error) {
-      setActionError(error.message);
-    } finally {
-      setBusyKey("");
-    }
-  }
-
-  function saveEdit(item) {
-    runItemAction(`save-${item.id}`, async () => {
-      const data = await requestMysql(`/items/${item.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(draft),
-      });
-      updateItemDetails(item.id, data.item);
-      setEditingId(null);
-    });
-  }
-
-  function changeStatus(itemId, status) {
-    runItemAction(`status-${itemId}-${status}`, async () => {
-      const data = await requestMysql(`/items/${itemId}/status`, {
-        method: "PATCH",
-        body: JSON.stringify({ status }),
-      });
-      updateItemStatus(itemId, data.item.status);
-    });
-  }
-
-  function removeItem(itemId) {
-    runItemAction(`delete-${itemId}`, async () => {
-      await requestMysql(`/items/${itemId}`, {
-        method: "DELETE",
-      });
-      deleteItem(itemId);
-    });
-  }
-
   return (
     <AdminSection
       title={kind === "lost" ? "Manage Lost Items" : "Manage Found Items"}
       text={kind === "lost" ? "View, edit, approve, reject, delete, or resolve lost item posts." : "Verify found item reports before publishing and manage their return status."}
       actions={<div className="input-wrap admin-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search posts..." /></div>}
     >
-      {actionError ? <p className="form-error">{actionError}</p> : null}
       <div className="admin-record-list">
         {filtered.map((item) => (
           <article className="card admin-record-card" key={item.id}>
@@ -1234,8 +978,8 @@ function AdminItemManager({ kind }) {
                 <label className="field"><span>Location</span><select value={draft.location} onChange={(event) => setDraft((prev) => ({ ...prev, location: event.target.value }))}>{locations.map((location) => <option key={location}>{location}</option>)}</select></label>
                 <label className="field"><span>Status</span><select value={draft.status} onChange={(event) => setDraft((prev) => ({ ...prev, status: event.target.value }))}>{adminItemStatuses.map((entry) => <option key={entry} value={entry}>{prettyStatus(entry)}</option>)}</select></label>
                 <div className="admin-row-actions">
-                  <button className="btn btn-dark small" type="button" onClick={() => saveEdit(item)} disabled={busyKey === `save-${item.id}`}>{busyKey === `save-${item.id}` ? "Saving..." : "Save"}</button>
-                  <button className="btn btn-light small" type="button" onClick={() => setEditingId(null)} disabled={busyKey === `save-${item.id}`}>Cancel</button>
+                  <button className="btn btn-dark small" type="button" onClick={() => { updateItemDetails(item.id, draft); setEditingId(null); }}>Save</button>
+                  <button className="btn btn-light small" type="button" onClick={() => setEditingId(null)}>Cancel</button>
                 </div>
               </div>
             ) : (
@@ -1251,10 +995,10 @@ function AdminItemManager({ kind }) {
                   <div className="admin-row-actions">
                     <Link className="btn btn-light small" to={`/items/${item.id}`}><Eye size={13} /> View</Link>
                     <button className="btn btn-light small" type="button" onClick={() => startEdit(item)}>Edit</button>
-                    <button className="btn btn-light small" type="button" onClick={() => changeStatus(item.id, "approved")} disabled={busyKey.startsWith(`status-${item.id}`)}>Approve</button>
-                    <button className="btn btn-red small" type="button" onClick={() => changeStatus(item.id, "rejected")} disabled={busyKey.startsWith(`status-${item.id}`)}>Reject</button>
-                    <button className="btn btn-dark small" type="button" onClick={() => changeStatus(item.id, "returned")} disabled={busyKey.startsWith(`status-${item.id}`)}>Returned</button>
-                    <button className="btn btn-light small" type="button" onClick={() => removeItem(item.id)} disabled={busyKey === `delete-${item.id}`}>{busyKey === `delete-${item.id}` ? "Deleting..." : "Delete"}</button>
+                    <button className="btn btn-light small" type="button" onClick={() => updateItemStatus(item.id, "approved")}>Approve</button>
+                    <button className="btn btn-red small" type="button" onClick={() => updateItemStatus(item.id, "rejected")}>Reject</button>
+                    <button className="btn btn-dark small" type="button" onClick={() => updateItemStatus(item.id, "returned")}>Returned</button>
+                    <button className="btn btn-light small" type="button" onClick={() => deleteItem(item.id)}>Delete</button>
                   </div>
                 </div>
               </>
@@ -1282,43 +1026,9 @@ function AdminCategoriesPanel() {
 }
 
 function AdminUsersPanel() {
-  const [users, setUsers] = useState([]);
-  const [error, setError] = useState("");
-  const [busyKey, setBusyKey] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    requestMysql("/admin/users")
-      .then((data) => {
-        if (!cancelled) setUsers(data.users || []);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function runUserAction(key, userId, payload) {
-    setError("");
-    setBusyKey(key);
-    try {
-      const data = await requestMysql(`/admin/users/${userId}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-      });
-      setUsers((current) => current.map((entry) => (String(entry.id) === String(userId) ? data.user : entry)));
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusyKey("");
-    }
-  }
-
+  const { users, updateUserStatus, updateUserRole } = useAppStore();
   return (
     <AdminSection title="User Management" text="View users, verify accounts, block suspicious activity, and manage roles.">
-      {error ? <p className="form-error">{error}</p> : null}
       <div className="admin-record-list">
         {users.map((entry) => (
           <article className="card admin-record-card" key={entry.id}>
@@ -1330,9 +1040,9 @@ function AdminUsersPanel() {
               </div>
               <div className="admin-row-actions">
                 <StatusBadge status={entry.status} />
-                <button className="btn btn-light small" type="button" disabled={busyKey === `verify-${entry.id}`} onClick={() => runUserAction(`verify-${entry.id}`, entry.id, { status: "verified" })}>Verify</button>
-                <button className="btn btn-red small" type="button" disabled={busyKey === `block-${entry.id}`} onClick={() => runUserAction(`block-${entry.id}`, entry.id, { status: "blocked" })}>Block</button>
-                <button className="btn btn-light small" type="button" disabled={busyKey === `role-${entry.id}`} onClick={() => runUserAction(`role-${entry.id}`, entry.id, { role: entry.role === "Moderator" ? "student" : "moderator" })}>Toggle Role</button>
+                <button className="btn btn-light small" type="button" onClick={() => updateUserStatus(entry.id, "verified")}>Verify</button>
+                <button className="btn btn-red small" type="button" onClick={() => updateUserStatus(entry.id, "blocked")}>Block</button>
+                <button className="btn btn-light small" type="button" onClick={() => updateUserRole(entry.id, entry.role === "Moderator" ? "Student" : "Moderator")}>Toggle Role</button>
               </div>
             </div>
           </article>
@@ -1363,34 +1073,14 @@ function AdminClaimsPanel({ status, setStatus }) {
 
 function AdminMessagesPanel() {
   const { messages, updateMessageStatus } = useAppStore();
-  const [error, setError] = useState("");
-  const [busyKey, setBusyKey] = useState("");
-
-  async function changeStatus(messageId, status) {
-    setError("");
-    setBusyKey(`${messageId}-${status}`);
-    try {
-      const data = await requestMysql(`/admin/messages/${messageId}/status`, {
-        method: "PATCH",
-        body: JSON.stringify({ status }),
-      });
-      updateMessageStatus(messageId, data.message.status);
-    } catch (requestError) {
-      setError(requestError.message || "Could not update the message.");
-    } finally {
-      setBusyKey("");
-    }
-  }
-
   return (
     <AdminSection title="Messages / Contact Requests" text="Monitor finder-owner communication and respond to user queries.">
-      {error ? <p className="form-error">{error}</p> : null}
       <div className="admin-record-list">
         {messages.map((message) => (
           <article className="card admin-record-card" key={message.id}>
             <div className="admin-record-main">
               <div><h3>{message.subject}</h3><p>{message.message}</p><small>{message.name} - {safeEmail(message.email)} - {formatDate(message.createdAt)}</small></div>
-              <div className="admin-row-actions"><StatusBadge status={message.status} /><button className="btn btn-light small" type="button" onClick={() => changeStatus(message.id, "answered")} disabled={Boolean(busyKey)}>{busyKey === `${message.id}-answered` ? "Saving..." : "Mark Answered"}</button><button className="btn btn-dark small" type="button" onClick={() => changeStatus(message.id, "closed")} disabled={Boolean(busyKey)}>{busyKey === `${message.id}-closed` ? "Saving..." : "Close"}</button></div>
+              <div className="admin-row-actions"><StatusBadge status={message.status} /><button className="btn btn-light small" type="button" onClick={() => updateMessageStatus(message.id, "answered")}>Mark Answered</button><button className="btn btn-dark small" type="button" onClick={() => updateMessageStatus(message.id, "closed")}>Close</button></div>
             </div>
           </article>
         ))}
@@ -1401,34 +1091,14 @@ function AdminMessagesPanel() {
 
 function AdminComplaintsPanel() {
   const { complaints, updateComplaintStatus } = useAppStore();
-  const [error, setError] = useState("");
-  const [busyKey, setBusyKey] = useState("");
-
-  async function changeStatus(complaintId, status) {
-    setError("");
-    setBusyKey(`${complaintId}-${status}`);
-    try {
-      const data = await requestMysql(`/admin/reports/${complaintId}/status`, {
-        method: "PATCH",
-        body: JSON.stringify({ status }),
-      });
-      updateComplaintStatus(complaintId, data.report.status);
-    } catch (requestError) {
-      setError(requestError.message || "Could not update the report.");
-    } finally {
-      setBusyKey("");
-    }
-  }
-
   return (
     <AdminSection title="Reports & Complaints" text="Handle fake posts, fraud reports, spam, and inappropriate content.">
-      {error ? <p className="form-error">{error}</p> : null}
       <div className="admin-record-list">
         {complaints.map((complaint) => (
           <article className="card admin-record-card" key={complaint.id}>
             <div className="admin-record-main">
               <div><h3>{complaint.type}: {complaint.target}</h3><p>{complaint.detail}</p><small>Reported by {complaint.reporter} - {formatDate(complaint.createdAt)}</small></div>
-              <div className="admin-row-actions"><StatusBadge status={complaint.status} /><button className="btn btn-light small" type="button" onClick={() => changeStatus(complaint.id, "reviewing")} disabled={Boolean(busyKey)}>{busyKey === `${complaint.id}-reviewing` ? "Saving..." : "Review"}</button><button className="btn btn-red small" type="button" onClick={() => changeStatus(complaint.id, "action-taken")} disabled={Boolean(busyKey)}>{busyKey === `${complaint.id}-action-taken` ? "Saving..." : "Action Taken"}</button><button className="btn btn-dark small" type="button" onClick={() => changeStatus(complaint.id, "closed")} disabled={Boolean(busyKey)}>{busyKey === `${complaint.id}-closed` ? "Saving..." : "Close"}</button></div>
+              <div className="admin-row-actions"><StatusBadge status={complaint.status} /><button className="btn btn-light small" type="button" onClick={() => updateComplaintStatus(complaint.id, "reviewing")}>Review</button><button className="btn btn-red small" type="button" onClick={() => updateComplaintStatus(complaint.id, "action-taken")}>Action Taken</button><button className="btn btn-dark small" type="button" onClick={() => updateComplaintStatus(complaint.id, "closed")}>Close</button></div>
             </div>
           </article>
         ))}
@@ -1580,88 +1250,9 @@ function AdminAnalyticsPanel() {
 }
 
 function AdminSettingsPanel() {
-  const { settings, updateSettings, user, loginWithUser } = useAppStore();
+  const { settings, updateSettings } = useAppStore();
   const [form, setForm] = useState(settings);
-  const [accountForm, setAccountForm] = useState({
-    email: user?.email || "",
-    currentPassword: "",
-    newPassword: "",
-    confirmPassword: "",
-  });
-  const [accountError, setAccountError] = useState("");
-  const [accountSuccess, setAccountSuccess] = useState("");
-  const [savingAccount, setSavingAccount] = useState(false);
   const update = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
-
-  useEffect(() => {
-    setAccountForm((prev) => ({ ...prev, email: user?.email || "" }));
-  }, [user]);
-
-  function updateAccount(key, value) {
-    setAccountError("");
-    setAccountSuccess("");
-    setAccountForm((prev) => ({ ...prev, [key]: value }));
-  }
-
-  async function submitAdminAccount(event) {
-    event.preventDefault();
-    const nextEmail = accountForm.email.trim();
-    const currentEmail = user?.email || "";
-    const emailChanged = nextEmail.toLowerCase() !== currentEmail.toLowerCase();
-    const passwordChanged = Boolean(accountForm.newPassword);
-
-    if (!nextEmail) {
-      setAccountError("Admin email is required.");
-      return;
-    }
-    if (!isUiuEmail(nextEmail)) {
-      setAccountError("Admin email must contain uiu.ac.bd.");
-      return;
-    }
-    if (!accountForm.currentPassword) {
-      setAccountError("Current password is required.");
-      return;
-    }
-    if (passwordChanged && accountForm.newPassword.length < 6) {
-      setAccountError("New password must be at least 6 characters.");
-      return;
-    }
-    if (passwordChanged && accountForm.newPassword !== accountForm.confirmPassword) {
-      setAccountError("New password and confirm password do not match.");
-      return;
-    }
-    if (!emailChanged && !passwordChanged) {
-      setAccountError("Change the admin email or enter a new password first.");
-      return;
-    }
-
-    setSavingAccount(true);
-    try {
-      const payload = {
-        currentPassword: accountForm.currentPassword,
-        ...(emailChanged ? { email: nextEmail } : {}),
-        ...(passwordChanged ? { newPassword: accountForm.newPassword } : {}),
-      };
-      const data = await requestMysql("/admin/account", {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-      });
-      setSessionToken(data.token);
-      loginWithUser(data.user);
-      setAccountSuccess(data.message || "Admin account updated successfully.");
-      setAccountForm({
-        email: data.user.email || nextEmail,
-        currentPassword: "",
-        newPassword: "",
-        confirmPassword: "",
-      });
-    } catch (error) {
-      setAccountError(error.message || "Could not update the admin account.");
-    } finally {
-      setSavingAccount(false);
-    }
-  }
-
   return (
     <AdminSection title="Settings" text="Manage website name, logo label, admin profile, privacy policy, contact details, and security settings.">
       <section className="card form-card">
@@ -1675,23 +1266,6 @@ function AdminSettingsPanel() {
           <LabeledTextarea label="Privacy Policy" value={form.privacyPolicy} onChange={(value) => update("privacyPolicy", value)} />
           <label className="toggle-line"><input type="checkbox" checked={form.notificationsEnabled} onChange={(event) => update("notificationsEnabled", event.target.checked)} /> Enable platform notifications</label>
           <button className="btn btn-dark" type="submit">Save Settings</button>
-        </form>
-      </section>
-      <section className="card form-card">
-        <form className="report-form" onSubmit={submitAdminAccount}>
-          <h3>Admin Account</h3>
-          <p className="subtle">Change the admin email and password for the MySQL-backed administrator account.</p>
-          <div className="claim-grid">
-            <LabeledInput label="Admin Email" value={accountForm.email} onChange={(value) => updateAccount("email", value)} placeholder="admin@uiu.ac.bd" />
-            <LabeledInput label="Current Password" type="password" value={accountForm.currentPassword} onChange={(value) => updateAccount("currentPassword", value)} placeholder="Enter current password" />
-          </div>
-          <div className="claim-grid">
-            <LabeledInput label="New Password" type="password" value={accountForm.newPassword} onChange={(value) => updateAccount("newPassword", value)} placeholder="Leave blank to keep current password" />
-            <LabeledInput label="Confirm New Password" type="password" value={accountForm.confirmPassword} onChange={(value) => updateAccount("confirmPassword", value)} placeholder="Re-enter new password" />
-          </div>
-          {accountError ? <p className="form-error">{accountError}</p> : null}
-          {accountSuccess ? <p className="showing">{accountSuccess}</p> : null}
-          <button className="btn btn-dark" type="submit" disabled={savingAccount}>{savingAccount ? "Saving..." : "Update Admin Login"}</button>
         </form>
       </section>
     </AdminSection>
@@ -1936,34 +1510,19 @@ function ClaimCard({ claim, item, showReview = false }) {
 function ReviewControls({ claim }) {
   const updateClaimStatus = useAppStore((s) => s.updateClaimStatus);
   const [note, setNote] = useState(claim.adminNote || "");
-  const [error, setError] = useState("");
-  const [busyStatus, setBusyStatus] = useState("");
 
-  async function setStatus(status) {
-    setError("");
-    setBusyStatus(status);
-    try {
-      const data = await requestMysql(`/admin/claims/${claim.id}/status`, {
-        method: "PATCH",
-        body: JSON.stringify({ status, adminNote: note }),
-      });
-      updateClaimStatus(claim.id, data.claim.status, data.claim.adminNote || "");
-    } catch (requestError) {
-      setError(requestError.message || "Could not update claim status.");
-    } finally {
-      setBusyStatus("");
-    }
+  function setStatus(status) {
+    updateClaimStatus(claim.id, status, note);
   }
 
   return (
     <div className="review-box">
       <LabeledTextarea label="Admin Review Note" value={note} onChange={setNote} placeholder="Add verification decision, pickup instruction, or rejection reason..." />
-      {error ? <p className="form-error">{error}</p> : null}
       <div className="review-actions">
-        <button className="btn btn-light small" type="button" onClick={() => setStatus("under-review")} disabled={Boolean(busyStatus)}><Clock size={13} /> {busyStatus === "under-review" ? "Saving..." : "Review"}</button>
-        <button className="btn btn-light small" type="button" onClick={() => setStatus("approved")} disabled={Boolean(busyStatus)}><CheckCircle size={13} /> {busyStatus === "approved" ? "Saving..." : "Approve"}</button>
-        <button className="btn btn-red small" type="button" onClick={() => setStatus("rejected")} disabled={Boolean(busyStatus)}><X size={13} /> {busyStatus === "rejected" ? "Saving..." : "Reject"}</button>
-        <button className="btn btn-dark small" type="button" onClick={() => setStatus("returned")} disabled={Boolean(busyStatus)}><ShieldCheck size={13} /> {busyStatus === "returned" ? "Saving..." : "Returned"}</button>
+        <button className="btn btn-light small" type="button" onClick={() => setStatus("under-review")}><Clock size={13} /> Review</button>
+        <button className="btn btn-light small" type="button" onClick={() => setStatus("approved")}><CheckCircle size={13} /> Approve</button>
+        <button className="btn btn-red small" type="button" onClick={() => setStatus("rejected")}><X size={13} /> Reject</button>
+        <button className="btn btn-dark small" type="button" onClick={() => setStatus("returned")}><ShieldCheck size={13} /> Returned</button>
       </div>
     </div>
   );
@@ -2160,7 +1719,6 @@ function ClaimWorkflow({ item, kind, detailsVisible: detailsVisibleProp = null }
   const [showClaimForm, setShowClaimForm] = useState(false);
   const [claimError, setClaimError] = useState("");
   const [claimSubmitted, setClaimSubmitted] = useState(Boolean(existingClaim));
-  const [submittingClaim, setSubmittingClaim] = useState(false);
   const [claimForm, setClaimForm] = useState({
     uiuId: profile?.uiuId || "",
     name: user?.name || "",
@@ -2186,11 +1744,7 @@ function ClaimWorkflow({ item, kind, detailsVisible: detailsVisibleProp = null }
     setClaimForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  useEffect(() => {
-    setClaimSubmitted(Boolean(existingClaim));
-  }, [existingClaim]);
-
-  async function handleClaimSubmit(event) {
+  function handleClaimSubmit(event) {
     event.preventDefault();
     if (!claimForm.uiuId.trim()) {
       setClaimError("UIU ID is required.");
@@ -2201,30 +1755,27 @@ function ClaimWorkflow({ item, kind, detailsVisible: detailsVisibleProp = null }
       return;
     }
 
-    setSubmittingClaim(true);
-    try {
-      const data = await requestMysql("/claims", {
-        method: "POST",
-        body: JSON.stringify({
-          itemId: item.id,
-          uiuId: claimForm.uiuId.trim(),
-          name: claimForm.name.trim(),
-          phone: claimForm.phone.trim(),
-          proof: claimForm.proof.trim(),
-          uniqueMark: claimForm.uniqueMark.trim(),
-          lastSeen: claimForm.lastSeen.trim(),
-          preferredReturnLocation: claimForm.preferredReturnLocation.trim(),
-        }),
-      });
-      submitClaim(data.claim);
-      setClaimError("");
-      setClaimSubmitted(true);
-      setShowClaimForm(false);
-    } catch (error) {
-      setClaimError(error.message || "Could not submit your claim.");
-    } finally {
-      setSubmittingClaim(false);
-    }
+    submitClaim({
+      itemId: item.id,
+      itemKind: kind,
+      itemTitle: item.title,
+      itemCategory: item.category,
+      itemLocation: item.location,
+      itemDate: item.date,
+      itemReporter: item.reporter,
+      uiuId: claimForm.uiuId.trim(),
+      name: claimForm.name.trim(),
+      email: claimForm.email.trim(),
+      phone: claimForm.phone.trim(),
+      proof: claimForm.proof.trim(),
+      uniqueMark: claimForm.uniqueMark.trim(),
+      lastSeen: claimForm.lastSeen.trim(),
+      preferredReturnLocation: claimForm.preferredReturnLocation.trim(),
+      submittedBy: user?.email || "guest",
+    });
+    setClaimError("");
+    setClaimSubmitted(true);
+    setShowClaimForm(false);
   }
 
   if (isOwnReport) {
@@ -2282,8 +1833,8 @@ function ClaimWorkflow({ item, kind, detailsVisible: detailsVisibleProp = null }
           <LabeledTextarea label="Verification Details (Optional)" value={claimForm.proof} onChange={(v) => updateClaim("proof", v)} placeholder="Add anything that helps verify this claim..." />
           {claimError ? <p className="form-error">{claimError}</p> : null}
           <div className="claim-actions">
-            <button className="btn btn-red" type="submit" disabled={submittingClaim}>{submittingClaim ? "Submitting..." : "Submit Claim"}</button>
-            <button className="btn btn-light" type="button" onClick={() => { setShowClaimForm(false); setClaimError(""); }} disabled={submittingClaim}>Cancel</button>
+            <button className="btn btn-red" type="submit">Submit Claim</button>
+            <button className="btn btn-light" type="button" onClick={() => { setShowClaimForm(false); setClaimError(""); }}>Cancel</button>
           </div>
         </form>
       ) : null}

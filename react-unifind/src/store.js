@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 const STORAGE_KEY = "unifind-store-v2";
+const ADMIN_EMAIL = "admin@unifind.demo";
 
 const lostSeed = [
   { id: 1, title: "Grey Hoodie", category: "Clothing", description: 'University hoodie, grey color, size M. Has my initials "JW" on the tag.', color: "Gray", location: "Recreation Center", date: "2026-04-23", reporter: "Jordan Williams", email: "jordan.w@university.edu", phone: "555-0109", kind: "lost", status: "reported" },
@@ -49,11 +50,11 @@ function loadState() {
 }
 
 function saveState(state) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch (error) {
-    console.warn("Unable to save UniFind state locally.", error);
-  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function isAdminEmail(email = "") {
+  return String(email).trim().toLowerCase() === ADMIN_EMAIL;
 }
 
 function makeNotification(text, extra = {}) {
@@ -211,7 +212,7 @@ export const useAppStore = create((set, get) => {
         ? { name: "Guest User", role: "Guest", email: "guest@unifind.demo" }
         : {
             name: payload.name || (mode === "signin" ? "UIU Student" : "New UIU User"),
-            role: payload.role || "Student",
+            role: isAdminEmail(payload.email) ? "Admin" : "Student",
             email: payload.email || (mode === "signin" ? "student@uiu.ac.bd" : "newuser@uiu.ac.bd"),
           };
       const users = get().users.some((entry) => entry.email === user.email)
@@ -220,25 +221,6 @@ export const useAppStore = create((set, get) => {
       const next = { ...get(), user, users };
       saveState(next);
       set({ user, users });
-    },
-    loginWithUser(userPayload) {
-      const user = {
-        id: userPayload.id,
-        name: userPayload.name || "UIU Student",
-        role: userPayload.role || "Student",
-        email: userPayload.email,
-      };
-      const users = get().users.some((entry) => entry.email === user.email)
-        ? get().users.map((entry) => (entry.email === user.email ? { ...entry, ...user, status: user.role === "Admin" ? "verified" : "verified" } : entry))
-        : [{ ...user, status: "verified", joinedAt: userPayload.joinedAt || new Date().toISOString() }, ...get().users];
-      const profile = {
-        ...get().profile,
-        phone: userPayload.phone || get().profile.phone || "",
-        uiuId: userPayload.uiuId || get().profile.uiuId || "",
-      };
-      const next = { ...get(), user, users, profile };
-      saveState(next);
-      set({ user, users, profile });
     },
     logout() {
       const next = { ...get(), user: null };
@@ -249,13 +231,13 @@ export const useAppStore = create((set, get) => {
       const createdAt = new Date().toISOString();
       const item = normalizeItem({
         ...payload,
-        id: payload.id ?? Date.now(),
+        id: Date.now(),
         status: "reported",
         adminStatus: "pending-review",
         reviewStatus: "pending",
-        source: payload.source || "student-report",
-        submittedAt: payload.submittedAt || createdAt,
-        createdAt: payload.createdAt || createdAt,
+        source: "student-report",
+        submittedAt: createdAt,
+        createdAt,
       });
       const items = [item, ...get().items];
       const matches = buildMatches(items);
@@ -272,44 +254,6 @@ export const useAppStore = create((set, get) => {
       set({ items, matches, notifications });
       return item;
     },
-    replaceItems(incomingItems) {
-      const items = Array.isArray(incomingItems) ? incomingItems.map(normalizeItem) : [];
-      const matches = buildMatches(items);
-      const next = { ...get(), items, matches };
-      saveState(next);
-      set({ items, matches });
-    },
-    replaceClaims(incomingClaims) {
-      const claims = Array.isArray(incomingClaims) ? incomingClaims : [];
-      const next = { ...get(), claims };
-      saveState(next);
-      set({ claims });
-    },
-    replaceMessages(incomingMessages) {
-      const messages = Array.isArray(incomingMessages) ? incomingMessages : [];
-      const next = { ...get(), messages };
-      saveState(next);
-      set({ messages });
-    },
-    replaceComplaints(incomingComplaints) {
-      const complaints = Array.isArray(incomingComplaints) ? incomingComplaints : [];
-      const next = { ...get(), complaints };
-      saveState(next);
-      set({ complaints });
-    },
-    mergeItems(incomingItems) {
-      const normalizedIncoming = Array.isArray(incomingItems) ? incomingItems.map(normalizeItem) : [];
-      if (!normalizedIncoming.length) return;
-      const incomingIds = new Set(normalizedIncoming.map((item) => String(item.id)));
-      const items = [
-        ...normalizedIncoming,
-        ...get().items.filter((item) => !incomingIds.has(String(item.id))),
-      ];
-      const matches = buildMatches(items);
-      const next = { ...get(), items, matches };
-      saveState(next);
-      set({ items, matches });
-    },
     saveFilter(kind, filter) {
       const savedFilters = { ...get().savedFilters, [kind]: filter };
       const next = { ...get(), savedFilters };
@@ -324,11 +268,7 @@ export const useAppStore = create((set, get) => {
       set({ matches, notifications });
     },
     updateItemStatus(itemId, status) {
-      const items = get().items.map((item) => (
-        item.id === itemId
-          ? normalizeItem({ ...item, status })
-          : item
-      ));
+      const items = get().items.map((item) => (item.id === itemId ? { ...item, status, adminStatus: ["reported", "pending"].includes(status) ? "pending-review" : "reviewed" } : item));
       const matches = buildMatches(items);
       const target = items.find((item) => item.id === itemId);
       const notifications = [makeNotification(`${target?.title || "Item"} marked ${status}.`, { actionTo: target ? `/items/${target.id}` : "/admin" }), ...get().notifications];
@@ -337,11 +277,7 @@ export const useAppStore = create((set, get) => {
       set({ items, matches, notifications });
     },
     updateItemDetails(itemId, payload) {
-      const items = get().items.map((item) => (
-        item.id === itemId
-          ? normalizeItem({ ...item, ...payload })
-          : item
-      ));
+      const items = get().items.map((item) => (item.id === itemId ? { ...item, ...payload } : item));
       const matches = buildMatches(items);
       const target = items.find((item) => item.id === itemId);
       const notifications = [makeNotification(`${target?.title || "Item"} details updated.`, { actionTo: target ? `/items/${target.id}` : "/admin" }), ...get().notifications];
@@ -400,13 +336,13 @@ export const useAppStore = create((set, get) => {
       set({ users });
     },
     updateMessageStatus(messageId, status) {
-      const messages = get().messages.map((message) => (String(message.id) === String(messageId) ? { ...message, status } : message));
+      const messages = get().messages.map((message) => (message.id === messageId ? { ...message, status } : message));
       const next = { ...get(), messages };
       saveState(next);
       set({ messages });
     },
     updateComplaintStatus(complaintId, status) {
-      const complaints = get().complaints.map((complaint) => (String(complaint.id) === String(complaintId) ? { ...complaint, status } : complaint));
+      const complaints = get().complaints.map((complaint) => (complaint.id === complaintId ? { ...complaint, status } : complaint));
       const next = { ...get(), complaints };
       saveState(next);
       set({ complaints });
@@ -426,12 +362,13 @@ export const useAppStore = create((set, get) => {
       set({ settings });
     },
     submitClaim(payload) {
-      const createdAt = payload.createdAt || new Date().toISOString();
-      const claim = { status: "submitted", adminNote: "", createdAt, updatedAt: payload.updatedAt || createdAt, ...payload };
-      const claims = [claim, ...get().claims.filter((entry) => String(entry.id) !== String(claim.id))];
+      const id = Date.now();
+      const createdAt = new Date().toISOString();
+      const claim = { id, status: "submitted", adminNote: "", createdAt, updatedAt: createdAt, ...payload };
+      const claims = [claim, ...get().claims];
       const notifications = [
-        makeNotification(`Claim submitted for ${claim.itemTitle}.`, { actionTo: "/claims", date: createdAt }),
-        makeNotification(`Claim review needed: ${claim.name || "A user"} submitted a claim for ${claim.itemTitle}.`, {
+        makeNotification(`Claim submitted for ${payload.itemTitle}.`, { actionTo: "/claims", date: createdAt }),
+        makeNotification(`Claim review needed: ${payload.name || "A user"} submitted a claim for ${payload.itemTitle}.`, {
           actionTo: "/admin",
           audience: "admin",
           date: createdAt,
@@ -446,15 +383,15 @@ export const useAppStore = create((set, get) => {
       return claim;
     },
     updateClaimStatus(claimId, status, adminNote = "") {
-      const claim = get().claims.find((entry) => String(entry.id) === String(claimId));
+      const claim = get().claims.find((entry) => entry.id === claimId);
       if (!claim) return;
       const updatedAt = new Date().toISOString();
       const claims = get().claims.map((entry) => (
-        String(entry.id) === String(claimId) ? { ...entry, status, adminNote, updatedAt } : entry
+        entry.id === claimId ? { ...entry, status, adminNote, updatedAt } : entry
       ));
       const shouldReturnItem = status === "returned";
       const items = shouldReturnItem
-        ? get().items.map((item) => (String(item.id) === String(claim.itemId) ? { ...item, status: "returned" } : item))
+        ? get().items.map((item) => (item.id === claim.itemId ? { ...item, status: "returned" } : item))
         : get().items;
       const matches = shouldReturnItem ? buildMatches(items) : get().matches;
       const notifications = [
