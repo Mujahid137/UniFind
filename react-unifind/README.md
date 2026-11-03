@@ -26,6 +26,6 @@ Vercel builds with Vite and serves `dist`. The rewrite in `vercel.json` supports
 
 - Choose **Login as Guest** on the home page to open the student dashboard.
 - Open `/admin` with `admin@unifind.demo` and `UniFindDemo123!` for the demo administration workspace.
-- See [showcase/README.md](showcase/README.md) for the screenshot collection and agency copy.
+- See [the screenshot gallery](../docs/showcase/README.md) for the screenshot collection and agency copy.
 
-The `showcase-vercel` branch packages this local demo separately from the existing application on `main`.
+The repository's main README includes the live showcase and portfolio screenshots.

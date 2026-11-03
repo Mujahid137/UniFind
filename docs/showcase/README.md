@@ -26,3 +26,37 @@ This is an interactive portfolio demo using browser-local data. The figures disp
 | `08-item-details.png` | Item details and ownership claims |
 
 Desktop screenshots use a 1440px viewport; the mobile screenshot uses a 390px viewport. Images show the application's original seeded demo content and placeholders. No real user submissions were added for these screenshots.
+
+## Gallery
+
+### Home page
+
+![UniFind desktop home page](01-home-desktop.png)
+
+### Full landing page
+
+![UniFind full landing page](02-home-full-page.png)
+
+### Student dashboard
+
+![UniFind student dashboard](03-student-dashboard.png)
+
+### Found-item browser
+
+![UniFind found-item browser](04-browse-found-items.png)
+
+### Administration dashboard
+
+![UniFind administration dashboard](05-admin-dashboard.png)
+
+### Report form
+
+![UniFind found-item report form](06-report-found-item.png)
+
+### Mobile layout
+
+<img src="07-home-mobile.png" alt="UniFind mobile landing page" width="390" />
+
+### Item details
+
+![UniFind item details and claim workflow](08-item-details.png)
